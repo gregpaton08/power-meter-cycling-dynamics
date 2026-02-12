@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>VeloDyn</title>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <input type="text" id="port-input" placeholder="/dev/tty.usbserial..." value="/dev/cu.usbserial-1420" />
+        <button id="connect-btn">Connect ANT+</button>
+        <span id="status">Disconnected</span>
+      </div>
+
+      <div class="dashboard">
+        <div class="card power-card">
+          <h2>Power</h2>
+          <div class="big-number"><span id="power-val">0</span> <small>W</small></div>
+          <div class="sub-metric">Cadence: <span id="cadence-val">0</span> rpm</div>
+        </div>
+
+        <div class="card dyn-card">
+          <h2>Left</h2>
+          <canvas id="left-phase" width="200" height="200"></canvas>
+          <div class="stats">
+            <div>Smoothness: <span id="l-smooth">0</span>%</div>
+            <div>Torque Eff: <span id="l-torque">0</span>%</div>
+          </div>
+        </div>
+
+        <div class="card dyn-card">
+          <h2>Right</h2>
+          <canvas id="right-phase" width="200" height="200"></canvas>
+          <div class="stats">
+            <div>Smoothness: <span id="r-smooth">0</span>%</div>
+            <div>Torque Eff: <span id="r-torque">0</span>%</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>
