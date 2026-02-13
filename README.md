@@ -12,6 +12,12 @@ This template should help get you started developing with Tauri in vanilla HTML,
 cargo tauri dev
 ```
 
+## Build
+
+```bash
+cargo tauri build
+```
+
 # Power Meter Cycling Dynamics
 
 ## Prompt
