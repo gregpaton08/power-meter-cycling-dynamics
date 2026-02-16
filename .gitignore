@@ -30,3 +30,4 @@ dist-ssr
 *.icns
 
 project_context.md
+*.jsonl

@@ -1,12 +1,21 @@
-use tauri::AppHandle;
 mod protocol;
 mod ant_driver;
+mod replay_driver; // Don't forget to declare the new module
 
 #[tauri::command]
-fn start_listening(app: AppHandle, port: String) -> String {
-    let driver = ant_driver::AntDriver::new(port.clone(), app);
+fn start_listening(app: tauri::AppHandle, port: String) -> String {
+    // TRICK: If the user types "replay" or "test" into the Port box, 
+    // run the simulation instead of the USB driver.
+    if port.to_lowercase() == "replay" {
+        let player = replay_driver::ReplayDriver::new(app);
+        player.start();
+        return "Replaying capture.jsonl...".to_string();
+    }
+
+    // Otherwise, start the real hardware driver
+    let driver = ant_driver::AntDriver::new(port, app);
     match driver.start() {
-        Ok(_) => format!("Listening on {}", port),
+        Ok(_) => "Listening on USB...".to_string(),
         Err(e) => format!("Error: {}", e),
     }
 }

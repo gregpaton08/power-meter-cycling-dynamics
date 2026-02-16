@@ -26,6 +26,14 @@ cargo tauri build
 I want to build a desktop app (MacOS, Linux) that can show cycling dynamic data, either in real time from a power meter (Favero Assomia) synced to an Ant+ sensor, or analyzing a past ride from a fit file. It should be similar to what Garmin supports for cycling dynamics, including power phase, left/right balance, platform center offset, and position. The application should be written in Rust. The application should help a cyclist refine their form and pedalstroke. Is this possible? How should it be architected? What about this should be changed or improved?
 ```
 
+## Docs
+
+https://www.thisisant.com/developer
+https://forums.garmin.com/cfs-file/__key/communityserver-discussions-components-files/402/D00001086_5F00_ANT_2B005F00_Device_5F00_Profile_5F002D005F00_Bicycle_5F00_Power_5F00_Rev_5F00_5.1.pdf
+
+https://docs.rs/rusb/latest/rusb/
+
+
 ## Random
 
 ```

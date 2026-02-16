@@ -22,49 +22,60 @@ pub struct CyclingData {
     pub pco: i8,            // Platform Center Offset (mm)
 }
 
-// Helper to decode "Power Only" Page 0x10
 pub fn parse_page_10(payload: &[u8], state: &mut CyclingData) {
-    // Byte 6: Instant Cadence
-    state.cadence = payload[6];
-    // Byte 7: Instant Power LSB, combined with MSB logic if needed (simplified here)
-    state.instant_power = (payload[7] as u16) + ((payload[6] as u16) << 8); 
-    // Note: Standard accumulates power, but for Favero often payload[7] + low nibble of 6 is instant.
-    // Simplified: Just taking byte 7 + 8 for generic power meters often works differently.
-    // Better implementation for standard Power Profile:
-    state.instant_power = (payload[7] as u16) | ((payload[6] as u16) << 8);
+    // Standard Power Page (0x10)
+    // Byte 3: Cadence
+    state.cadence = payload[3];
+
+    // Byte 6-7: Instant Power (Little Endian)
+    let low = payload[6] as u16;
+    let high = payload[7] as u16;
+    state.instant_power = low | (high << 8);
 }
 
-// Helper to decode "Torque Effectiveness & Pedal Smoothness" Page 0x13
 pub fn parse_page_13(payload: &[u8], state: &mut CyclingData) {
-    // Byte 1: Left Torque Effectiveness (0-100, 0xFF=Invalid)
-    if payload[1] != 0xFF { state.l_torque_eff = payload[1] / 2; }
-    // Byte 2: Right Torque Effectiveness
-    if payload[2] != 0xFF { state.r_torque_eff = payload[2] / 2; }
-    // Byte 3: Left Pedal Smoothness
-    if payload[3] != 0xFF { state.l_pedal_smooth = payload[3] / 2; }
-    // Byte 4: Right Pedal Smoothness
-    if payload[4] != 0xFF { state.r_pedal_smooth = payload[4] / 2; }
+    // Torque Effectiveness & Pedal Smoothness (0x13)
+    // Left: Byte 1 (TE), Byte 3 (PS)
+    // Right: Byte 2 (TE), Byte 4 (PS)
+    // Values are 0-100 (0.5% steps). 0xFF is invalid.
+
+    if payload[1] != 0xFF {
+        state.l_torque_eff = payload[1] / 2;
+    }
+    if payload[2] != 0xFF {
+        state.r_torque_eff = payload[2] / 2;
+    }
+    if payload[3] != 0xFF {
+        state.l_pedal_smooth = payload[3] / 2;
+    }
+    if payload[4] != 0xFF {
+        state.r_pedal_smooth = payload[4] / 2;
+    }
 }
 
-// Helper to decode "Cycling Dynamics" Page 0x19 (Power Phase)
-// This is complex. Favero sends this interleaved.
 pub fn parse_page_19(payload: &[u8], state: &mut CyclingData) {
-    // Subpage identifier is often in Byte 1 or implicit logic
-    // Simplified Parsing for Standard ANT+ Power Phase
-    // Byte 2: Power Phase Start (Left) - 1/256 steps of 360 degrees
-    // Byte 3: Power Phase Length (Left)
-    // Byte 4: Power Phase Start (Right)
-    // Byte 5: Power Phase Length (Right)
-    
-    let l_start_val = payload[2] as f32;
-    let l_len_val = payload[3] as f32;
-    state.l_phase_start = (l_start_val / 256.0) * 360.0;
-    let l_end_raw = l_start_val + l_len_val;
-    state.l_phase_end = ((l_end_raw / 256.0) * 360.0) % 360.0;
+    // Torque Effectiveness / Cycling Dynamics (0x19)
+    // This often contains Power Phase.
+    // NOTE: This page is complex and has sub-pages defined by Byte 1.
+    // For now, let's just parse the standard Power Phase if present.
 
-    let r_start_val = payload[4] as f32;
-    let r_len_val = payload[5] as f32;
-    state.r_phase_start = (r_start_val / 256.0) * 360.0;
-    let r_end_raw = r_start_val + r_len_val;
-    state.r_phase_end = ((r_end_raw / 256.0) * 360.0) % 360.0;
+    // Byte 2: Power Phase Start L (1/256 of circle)
+    // Byte 3: Power Phase Length L
+    let l_start = payload[2] as f32;
+    let l_len = payload[3] as f32;
+
+    if l_start != 0.0 {
+        // Filter zeros/invalid
+        state.l_phase_start = (l_start / 256.0) * 360.0;
+        let end_raw = l_start + l_len;
+        state.l_phase_end = ((end_raw / 256.0) * 360.0) % 360.0;
+    }
+
+    let r_start = payload[4] as f32;
+    let r_len = payload[5] as f32;
+    if r_start != 0.0 {
+        state.r_phase_start = (r_start / 256.0) * 360.0;
+        let end_raw = r_start + r_len;
+        state.r_phase_end = ((end_raw / 256.0) * 360.0) % 360.0;
+    }
 }

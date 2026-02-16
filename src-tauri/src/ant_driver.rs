@@ -1,13 +1,15 @@
-use std::time::Duration;
+use crate::protocol::{self, CyclingData, ANT_PLUS_NET_KEY, SYNC_BYTE};
+use rusb::{Context, Device, DeviceHandle, Direction, TransferType, UsbContext};
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 use tauri::{AppHandle, Emitter};
-use rusb::{Context, Device, DeviceHandle, Direction, TransferType, UsbContext};
-use crate::protocol::{self, CyclingData, SYNC_BYTE, ANT_PLUS_NET_KEY};
 
 // Common Vendor IDs
-const VID_GARMIN: u16 = 0x0fcf; 
-const VID_SILABS: u16 = 0x10c4; 
+const VID_GARMIN: u16 = 0x0fcf;
+const VID_SILABS: u16 = 0x10c4;
 
 pub struct AntDriver {
     app: AppHandle,
@@ -24,12 +26,17 @@ impl AntDriver {
 
     pub fn start(&self) -> Result<(), Box<dyn std::error::Error>> {
         let context = Context::new()?;
-        
+
         // 1. Find Device
-        let (device, mut handle, ep_in, ep_out) = self.find_ant_device(&context)
+        let (device, mut handle, ep_in, ep_out) = self
+            .find_ant_device(&context)
             .ok_or("No ANT+ Stick found.")?;
 
-        println!("Found Stick: Bus {:03} Device {:03}", device.bus_number(), device.address());
+        println!(
+            "Found Stick: Bus {:03} Device {:03}",
+            device.bus_number(),
+            device.address()
+        );
 
         // 2. THE FIX: Force Reset the Device
         // This simulates unplugging/replugging it, which kicks macOS off the driver.
@@ -39,7 +46,7 @@ impl AntDriver {
         if let Err(e) = handle.reset() {
             eprintln!("Warning: Device reset failed (might be fine): {}", e);
         }
-        
+
         // Give the OS a moment to realize it's gone
         thread::sleep(Duration::from_millis(1000));
 
@@ -57,11 +64,11 @@ impl AntDriver {
         println!("Interface Claimed!");
 
         // 5. Initialize ANT+
-        // Standard Garmin Stick 2 does NOT want padding. 
+        // Standard Garmin Stick 2 does NOT want padding.
         self.send_usb_msg(&handle, ep_out, 0x4A, &[0x00])?; // Reset System
         thread::sleep(Duration::from_millis(500));
 
-        let mut net_msg = vec![0x00]; 
+        let mut net_msg = vec![0x00];
         net_msg.extend_from_slice(&ANT_PLUS_NET_KEY);
         self.send_usb_msg(&handle, ep_out, 0x46, &net_msg)?; // Set Network Key
         self.send_usb_msg(&handle, ep_out, 0x42, &[0x00, 0x00, 0x00])?; // Assign Chan 0
@@ -75,7 +82,7 @@ impl AntDriver {
         // 6. Read Loop
         let state_clone = self.state.clone();
         let app_handle = self.app.clone();
-        
+
         thread::spawn(move || {
             let mut buf = [0u8; 64];
             loop {
@@ -84,28 +91,54 @@ impl AntDriver {
                     Ok(n) if n > 0 => {
                         for i in 0..n {
                             if buf[i] == SYNC_BYTE && i + 1 < n {
-                                let len = buf[i+1] as usize;
+                                let len = buf[i + 1] as usize;
                                 if i + 3 + len <= n {
-                                    let msg_id = buf[i+2];
-                                    let data = &buf[i+3..i+3+len];
+                                    let msg_id = buf[i + 2];
+                                    let data = &buf[i + 3..i + 3 + len];
                                     if msg_id == protocol::MSG_BROADCAST_DATA {
+                                        // --- RECORDING BLOCK START ---
+                                        // We log the raw payload (8 bytes) and the current timestamp
+                                        let payload = &data[1..9];
+
+                                        // Create a simple JSON structure: {"ts": 12345, "data": [0, 255, ...]}
+                                        // We use SystemTime to handle playback timing later
+                                        let timestamp = std::time::SystemTime::now()
+                                            .duration_since(std::time::UNIX_EPOCH)
+                                            .unwrap()
+                                            .as_millis();
+
+                                        if let Ok(mut file) = OpenOptions::new()
+                                            .create(true)
+                                            .append(true)
+                                            .open("capture.jsonl")
+                                        {
+                                            // specific "cycling dynamics" pages are 0x19, power is 0x10
+                                            // We record everything just in case
+                                            let json_line = format!(
+                                                "{{\"ts\": {}, \"data\": {:?}}}\n",
+                                                timestamp, payload
+                                            );
+                                            let _ = file.write_all(json_line.as_bytes());
+                                        }
+                                        // --- RECORDING BLOCK END ---
+
                                         let mut state = state_clone.lock().unwrap();
-                                        let payload = &data[1..9]; 
+                                        let payload = &data[1..9];
                                         let page = payload[0] & 0x7F;
                                         match page {
                                             0x10 => protocol::parse_page_10(payload, &mut state),
                                             0x13 => protocol::parse_page_13(payload, &mut state),
                                             0x19 => protocol::parse_page_19(payload, &mut state),
-                                            _ => {} 
+                                            _ => {}
                                         }
                                         let _ = app_handle.emit("cycling-data", &*state);
                                     }
                                 }
                             }
                         }
-                    },
-                    Ok(_) => {}, 
-                    Err(rusb::Error::Timeout) => {}, // Ignore timeouts
+                    }
+                    Ok(_) => {}
+                    Err(rusb::Error::Timeout) => {} // Ignore timeouts
                     Err(e) => {
                         // If we get an Input/Output error, the device might have disconnected
                         eprintln!("Read Error: {:?}", e);
@@ -118,7 +151,10 @@ impl AntDriver {
         Ok(())
     }
 
-    fn find_ant_device(&self, context: &Context) -> Option<(Device<Context>, DeviceHandle<Context>, u8, u8)> {
+    fn find_ant_device(
+        &self,
+        context: &Context,
+    ) -> Option<(Device<Context>, DeviceHandle<Context>, u8, u8)> {
         for device in context.devices().ok()?.iter() {
             let desc = device.device_descriptor().ok()?;
             if desc.vendor_id() == VID_GARMIN || desc.vendor_id() == VID_SILABS {
@@ -130,8 +166,11 @@ impl AntDriver {
                     for descriptor in interface.descriptors() {
                         for endpoint in descriptor.endpoint_descriptors() {
                             if endpoint.transfer_type() == TransferType::Bulk {
-                                if endpoint.direction() == Direction::In { ep_in = Some(endpoint.address()); }
-                                else { ep_out = Some(endpoint.address()); }
+                                if endpoint.direction() == Direction::In {
+                                    ep_in = Some(endpoint.address());
+                                } else {
+                                    ep_out = Some(endpoint.address());
+                                }
                             }
                         }
                     }
@@ -146,15 +185,25 @@ impl AntDriver {
         None
     }
 
-    fn send_usb_msg(&self, handle: &DeviceHandle<Context>, ep_out: u8, msg_id: u8, data: &[u8]) -> Result<(), rusb::Error> {
+    fn send_usb_msg(
+        &self,
+        handle: &DeviceHandle<Context>,
+        ep_out: u8,
+        msg_id: u8,
+        data: &[u8],
+    ) -> Result<(), rusb::Error> {
         let len = data.len() as u8;
         let mut buf = vec![SYNC_BYTE, len, msg_id];
         buf.extend_from_slice(data);
         let mut checksum = 0;
-        for b in &buf { checksum ^= b; }
+        for b in &buf {
+            checksum ^= b;
+        }
         buf.push(checksum);
-        
+
         // NO PADDING for Garmin Stick 2
-        handle.write_bulk(ep_out, &buf, Duration::from_millis(1000)).map(|_| ())
+        handle
+            .write_bulk(ep_out, &buf, Duration::from_millis(1000))
+            .map(|_| ())
     }
 }
